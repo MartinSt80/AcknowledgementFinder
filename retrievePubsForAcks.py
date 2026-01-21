@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from FilePathsUrls import FilePaths
+
 from PublicationDownloadServices import QueryPmcAws, QueryPmcOaiPmh, QueryPmcFtp, QueryKopsPdf, QueryDoiHtml, \
     QueryShadowPdf, PublicationLog
 
@@ -110,7 +112,7 @@ def create_publication_log(pub_dir:Path, log_subdir:str, pub_log_file_name:str, 
     publication_data = [pub.list_publication_info() for pub in publications]
     publication_df = pd.DataFrame(publication_data, columns=headers)
     publication_df.to_csv(pub_dir / log_subdir / pub_log_file_name, index=False)
-
+    return
 
 def perform_download_from_shadow(pub_dir:Path,
                                  log_subdir:str,
@@ -145,35 +147,24 @@ def perform_download_from_shadow(pub_dir:Path,
         pubmed_list, doi_list = _retrieve_pubmed_doi_from_log()
 
     for pubmed_id, doi in zip(pubmed_list, doi_list):
-
         shadow_request.download_fulltext_pdf_from_shadow(pub_dir / pdf_subdir, pubmed_id[0], doi[0])
-
-
+    return
 
 
 if __name__ == '__main__':
 
-    # Directories and log files
-    publication_dir = Path('D:/PubTracker/test_pubs/2020')
-    log_subdirectory = 'logs'
-    pmc_xmlfulltext_subdirectory = 'pmc_xml_fulltexts'
-    pdf_fulltext_subdirectory = 'pdf_fulltexts'
-    html_fulltext_subdirectory = 'html_fulltexts'
-
-    publication_log_file_name = 'publications_log.csv'
-    download_log_file_name = 'download_log.txt'
 
     # Setup logging
-    root_logger = configure_logger(publication_dir / log_subdirectory / download_log_file_name)
+    root_logger = configure_logger(FilePaths.download_log_fullpath)
 
     # Create directories and logs
-    create_directories_and_files(publication_dir,
-    							 log_subdirectory,
-    							 download_log_file_name,
-    							 publication_log_file_name,
-    							 pmc_xmlfulltext_subdirectory,
-    							 pdf_fulltext_subdirectory,
-    							 html_fulltext_subdirectory,
+    create_directories_and_files(FilePaths.publication_dir,
+    							 FilePaths.log_subdirectory,
+    							 FilePaths.download_log_file_name,
+    							 FilePaths.publication_log_file_name,
+    							 FilePaths.pmc_xmlfulltext_subdirectory,
+    							 FilePaths.pdf_fulltext_subdirectory,
+    							 FilePaths.html_fulltext_subdirectory,
     							 )
 
     # Setup download interfaces, if needed
@@ -184,23 +175,23 @@ if __name__ == '__main__':
     shadow_request = QueryShadowPdf()
 
 
-    publication_list = perform_downloads(publication_dir,
-    									 pmc_xmlfulltext_subdirectory,
-    									 pdf_fulltext_subdirectory,
-    									 html_fulltext_subdirectory,
+    publication_list = perform_downloads(FilePaths.publication_dir,
+    									 FilePaths.pmc_xmlfulltext_subdirectory,
+    									 FilePaths.pdf_fulltext_subdirectory,
+    									 FilePaths.html_fulltext_subdirectory,
     									 )
 
     # # not needed, if performed before
-    # perform_download_from_shadow(publication_dir,
-    #                              log_subdirectory,
-    #                              pdf_fulltext_subdirectory,
-    #                              from_log=True,
-    #                              pub_log_filename=publication_log_file_name,
+    # perform_download_from_shadow(FilePaths.publication_dir,
+    #                              FilePaths.log_subdirectory,
+    #                              FilePaths.pdf_fulltext_subdirectory,
+    #                              FilePaths.from_log=True,
+    #                              FilePaths.pub_log_filename=publication_log_file_name,
     #                              )
 
     # Write the info
-    create_publication_log(publication_dir,
-    					   log_subdirectory,
-    					   publication_log_file_name,
-    					   publication_list,
+    create_publication_log(FilePaths.publication_dir,
+    					   FilePaths.log_subdirectory,
+    					   FilePaths.publication_log_file_name,
+    					   FilePaths.publication_list,
     					   )

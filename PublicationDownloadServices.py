@@ -1,5 +1,6 @@
 import logging
 logger = logging.getLogger(__name__)
+
 import shutil
 import tempfile
 import time
@@ -18,10 +19,11 @@ import requests
 import boto3
 from botocore.handlers import disable_signing
 
+from FilePathsUrls import Urls, FilePaths
+
 
 class PublicationLog:
 
-    id_converter_url = 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids='
 
     def __init__(self, path:Path) -> None:
         self.path = path
@@ -58,7 +60,7 @@ class PublicationLog:
         # For testing, known working PubmedID, to have a PMC entry
         # converter_response = requests.get(self.id_converter_url + '28729661')
 
-        converter_response = requests.get(self.id_converter_url + self.pmid)
+        converter_response = requests.get(Urls.pubmed_to_pmc_id_converter_url + self.pmid)
         if converter_response.status_code == 200:
             xml_root = ET.fromstring(converter_response.content)
             for record in xml_root.iter('record'):
@@ -110,8 +112,6 @@ class QueryPmcAws(object):
 
 class QueryPmcOaiPmh(object):
 
-    base_url = 'https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/'
-
     def download_fulltext_from_pmc_pmh(self, pmc_download_dir:Path, pmc_id:str) -> bool:
 
         xml_fulltext_download_path = pmc_download_dir / f'{pmc_id}_pmh.xml'
@@ -121,7 +121,7 @@ class QueryPmcOaiPmh(object):
                    'metadataPrefix': 'pmc',
                    }
 
-        pmc_oai_pmh_response = requests.get(self.base_url, params=payload)
+        pmc_oai_pmh_response = requests.get(Urls.pmc_pmh_base_url, params=payload)
         if pmc_oai_pmh_response.status_code == 200:
             with open(xml_fulltext_download_path, 'wb') as xml_file:
                 xml_file.write(pmc_oai_pmh_response.content)
@@ -134,18 +134,13 @@ class QueryPmcOaiPmh(object):
 
 class QueryPmcFtp(object):
 
-    base_ftp_url = 'ftp.ncbi.nlm.nih.gov'
-
-    # API to retrieve ftp links for given PMCIDs
-    oa_webservice_api_url = 'https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi'
     request_header = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36',
     }
 
     def __init__(self):
-        self.ftp_connection = FTP(self.base_ftp_url)
+        self.ftp_connection = FTP(Urls.pmc_ftp_url)
         self.ftp_connection.login()
-
 
     # Close the ftp session
     def __del__(self):
@@ -156,7 +151,7 @@ class QueryPmcFtp(object):
 
         req_payload = {'id': pmc_id}
 
-        pmc_info_response = requests.get(self.oa_webservice_api_url,
+        pmc_info_response = requests.get(Urls.oa_webservice_api_url,
                                          params=req_payload,
                                          headers= self.request_header)
 
@@ -170,10 +165,9 @@ class QueryPmcFtp(object):
                 for pmc_record in records_entry.findall("record"):
                     link = pmc_record.find('link')
                     if link.attrib['format'] == 'tgz':
-                        break
+                        return link.attrib['format'], link.attrib['href']
 
-                return link.attrib['format'], link.attrib['href']
-            return None, None
+        return None, None
 
     def download_pmc_fulltext_from_ftp(self, pmc_download_dir:Path, pmc_id:str) -> bool:
 
@@ -211,9 +205,6 @@ class QueryPmcFtp(object):
 
 class QueryKopsPdf(object):
 
-    kops_search_url = 'https://kops.uni-konstanz.de/search?spc.page=1&view=list&query='
-    kops_download_url = 'https://kops.uni-konstanz.de/bitstreams/'
-
     def __init__(self):
         # instantiate a Chrome options object
         options = webdriver.ChromeOptions()
@@ -228,7 +219,7 @@ class QueryKopsPdf(object):
     def download_fulltext_pdf_from_kops(self, kops_download_dir:Path, pubmed_id:str) -> bool:
 
         # request the search page
-        self.driver.get(self.kops_search_url + pubmed_id)
+        self.driver.get(Urls.kops_search_base_url + pubmed_id)
 
         # wait for the page to finish loading
         WebDriverWait(self.driver, 10).until(
@@ -252,7 +243,7 @@ class QueryKopsPdf(object):
                 # Identify the link to the publication_page and load it
                 for element in self.driver.find_elements(By.TAG_NAME, 'link'):
                     link_url = element.get_attribute("href")
-                    if link_url.startswith(self.kops_download_url):
+                    if link_url.startswith(Urls.kops_download_base_url):
                         response = requests.get(link_url)
                         with open(kops_download_dir / f'{pubmed_id}_kops.pdf', 'wb') as pdf_file:
                             pdf_file.write(response.content)
@@ -269,8 +260,6 @@ class QueryKopsPdf(object):
 
 class QueryDoiHtml(object):
 
-    doi_url = 'https://doi.org/'
-
     def __init__(self):
         # instantiate a Chrome options object
         options = webdriver.ChromeOptions()
@@ -285,14 +274,14 @@ class QueryDoiHtml(object):
     def download_fulltext_html_via_doi(self, html_download_dir:Path, doi:str) -> bool:
 
         # request the search page
-        self.driver.get(self.doi_url + doi)
+        self.driver.get(Urls.doi_base_url + doi)
 
         # wait for the page to finish loading
         WebDriverWait(self.driver, 10).until(
             lambda driver: driver.execute_script("return document.readyState") == "complete"
             )
 
-        # Wait another second, as a loading delay of elements may have been set (.X seconds)
+        # Wait another second, as a loading delay of elements may have been set
         time.sleep(1)
 
         # Store the webpage
@@ -304,24 +293,6 @@ class QueryDoiHtml(object):
 
 
 class QueryShadowPdf(object):
-
-    shadow_lib_url = 'https://www.wellesu.com/'
-    shadow_download_url = 'https://sci.bban.top/pdf/'
-
-    # def download_fulltext_pdf_from_shadow(self, pdf_download_dir:Path, pubmed_id:str, doi:str) -> bool:
-
-        # shadow_full_pdf_url = f'{self.shadow_download_url}{doi}.pdf'
-        # print(shadow_full_pdf_url)
-        # download_response = requests.get(shadow_full_pdf_url)
-        #
-        # if download_response.status_code == 200:
-        #     with open(pdf_download_dir / f'{pubmed_id}_shadow.pdf', 'wb') as pdf_file:
-        #         pdf_file.write(download_response.content)
-        #     logger.info(f'PubMed ID {pubmed_id} was found in shadow library and saved to {pdf_download_dir / f'{pubmed_id}_shadow.pdf'}.')
-        #     return True
-        # else:
-        #
-        #     return False
 
     def __init__(self):
         # instantiate a Chrome options object
@@ -337,7 +308,7 @@ class QueryShadowPdf(object):
     def download_fulltext_pdf_from_shadow(self, pdf_download_dir:Path, pubmed_id:str, doi:str) -> bool:
 
         # request the search page
-        self.driver.get(self.shadow_lib_url + doi)
+        self.driver.get(Urls.shadow_lib_base_url + doi)
 
         # wait for the page to finish loading
         WebDriverWait(self.driver, 10).until(
@@ -364,51 +335,24 @@ class QueryShadowPdf(object):
             print(f'No download link found for DOI {doi}')
             return False
 
-
-        # # Identify the link to the publication_page and load it
-        # link_to_publication_page = ''
-        # for element in self.driver.find_elements(By.CLASS_NAME, 'dont-break-out'):
-        #     if element.get_attribute('href'):
-        #         link_to_publication_page = element.get_attribute('href')
-        #         break
-
-        # if link_to_publication_page:
-        #     self.driver.get(link_to_publication_page)
-    #     #
-    #     #     # Identify the link to the publication_page and load it
-    #     #     for element in self.driver.find_elements(By.TAG_NAME, 'link'):
-    #     #         link_url = element.get_attribute("href")
-    #     #         if link_url.startswith(self.kops_download_url):
-    #     #             response = requests.get(link_url)
-    #     #             with open(kops_download_dir / f'{pubmed_id}_kops.pdf', 'wb') as pdf_file:
-    #     #                 pdf_file.write(response.content)
-    #     #             logger.info(f'PubMed ID {pubmed_id} was found in KOPS and saved to {kops_download_dir / f'{pubmed_id}_kops.pdf'}.')
-    #     #             return True
-    #     #
-    #     # logger.info(f'PubMed ID {pubmed_id} has no KOPS entry.')
-    #     # return False
-
-
 if __name__ == '__main__':
 
 
-    publication_dir = Path('D:/PubTracker/test_pubs/2020')
-    pmc_xmlfulltext_subdirectory = 'pmc_xml_fulltexts'
-    pdf_fulltext_subdirectory = 'pdf_fulltexts'
 
-    # ftp_query = QueryPmcFtp()
-    #
-    # ftp_query.download_pmc_fulltext_from_ftp(publication_dir / pmc_xmlfulltext_subdirectory, 'PMC7118124')
 
-    # pmc_request = QueryPmcAws()
+    ftp_query = QueryPmcFtp()
+    ftp_query.download_pmc_fulltext_from_ftp(FilePaths.publication_dir / FilePaths.pmc_xmlfulltext_subdirectory,
+                                             'PMC7118124',
+                                             )
 
-    # pmc_request.get_ftp_links()
 
-    # kops_query = QueryKopsPdf()
-    # kops_query.download_fulltext_pdf_from_kops(publication_dir / pdf_fulltext_subdirectory, '32072999')
+    kops_query = QueryKopsPdf()
+    kops_query.download_fulltext_pdf_from_kops(FilePaths.publication_dir / FilePaths.pdf_fulltext_subdirectory,
+                                               '32072999',
+                                               )
 
     shadow_query = QueryShadowPdf()
-    shadow_query.download_fulltext_pdf_from_shadow(publication_dir / pdf_fulltext_subdirectory,
+    shadow_query.download_fulltext_pdf_from_shadow(FilePaths.publication_dir / FilePaths.pdf_fulltext_subdirectory,
                                                    '32275434',
                                                    '10.1021/acs.jpca.0c01844',
                                                    )
