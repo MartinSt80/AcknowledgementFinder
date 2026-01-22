@@ -24,62 +24,87 @@ from FilePathsUrls import Urls, FilePaths
 
 class PublicationLog:
 
+    def __init__(self) -> None:
 
-    def __init__(self, path:Path) -> None:
-        self.path = path
-        self.file_name = path.name
-        self.pmid, self.doi = self._get_pmid_doi()
-        self.pmcid = self._get_pmcid()
-        self.is_pmc_xml_fulltext = False
+        self.citation_file_name = ''
+
+        self.pmid = ''
+        self.doi = ''
+        self.pmcid = ''
+
+        self.is_xml_fulltext = False
         self.is_pdf_fulltext = False
-        self.is_doi_fulltext = False
+        self.is_html_fulltext = False
+
+        self.is_fac_acknowledged = False
+        self.is_fac_suspected = False
 
     # get the PubmedId from the retrieved Pubmed citation entry
-    def _get_pmid_doi(self) -> Tuple[str, str]:
+    def _get_pmid_doi(self, citation_file_path:Path) -> None:
 
         doi = None
 
         # read the pubmed entry's xml-tree and identify the PubMed-ID
-        with self.path.open(mode='rb') as pub_entry_file:
+        with citation_file_path.open(mode='rb') as pub_entry_file:
             content = pub_entry_file.read()
         pubentry_xml_root = ET.fromstring(content)
-        pubmedid = pubentry_xml_root.find('DocSum').find('Id').text
+        self.pmid = pubentry_xml_root.find('DocSum').find('Id').text
 
         # in the items identify a doi entry
         item_list = pubentry_xml_root.find('DocSum').findall('Item')
         for item in item_list:
             if item.get('Name') == 'DOI':
-                doi = item.text
+                self.doi = item.text
                 break
-        return pubmedid, doi
+
 
     # Get current PMCID if available
     # Query the NCBI PubmedId to PMC converter, since a PMCID is not always assigned when the pubmed entry is generated
-    def _get_pmcid(self) -> str|None:
+    def _get_pmcid(self) -> None:
 
         # For testing, known working PubmedID, to have a PMC entry
         # converter_response = requests.get(self.id_converter_url + '28729661')
 
         converter_response = requests.get(Urls.pubmed_to_pmc_id_converter_url + self.pmid)
-        if converter_response.status_code == 200:
-            xml_root = ET.fromstring(converter_response.content)
-            for record in xml_root.iter('record'):
-                if not (record.get('status') == 'error'):
-                    logger.info(f'{Path(self.file_name).stem} with the PubmedID {self.pmid} has the PMC entry {record.get('pmcid')}.')
-                    return record.get('pmcid')
+        if converter_response.status_code != 200:
+            logger.info(
+                f'{Path(self.citation_file_name).stem} with the PubmedID {self.pmid} the API responded with an error code of {converter_response.status_code}.')
+            return
 
-                logger.info(
-                	f'{Path(self.file_name).stem} with the PubmedID {self.pmid} has no PMC entry.')
-            return None
+        xml_root = ET.fromstring(converter_response.content)
+        for record in xml_root.iter('record'):
+            if not (record.get('status') == 'error'):
+                logger.info(f'{Path(self.citation_file_name).stem} with the PubmedID {self.pmid} has the PMC entry {record.get('pmcid')}.')
+                self.pmcid = record.get('pmcid')
 
-        logger.info(
-        	f'{Path(self.file_name).stem} with the PubmedID {self.pmid} the API responded with an error code of {converter_response.status_code}.')
-        return None
+            logger.info(
+                f'{Path(self.citation_file_name).stem} with the PubmedID {self.pmid} has no PMC entry.')
+        return
+
+
+    # Initialize from a citation file
+    def initialize_from_citation(self, citation_path:Path) -> None:
+        self.citation_file_name = citation_path.name
+        self._get_pmid_doi(citation_path)
+        self._get_pmcid()
+
+
+    # Initialize from log
+    def initialize_from_log(self, pub_info_dict:dict) -> None:
+        self.citation_file_name = pub_info_dict.citation_file_name
+        self.pmid = pub_info_dict.pmid
+        self.doi = pub_info_dict.doi
+        self.pmcid = pub_info_dict.pmcid
+
+        self.is_xml_fulltext = pub_info_dict.is_xml_fulltext
+        self.is_pdf_fulltext = pub_info_dict.is_pdf_fulltext
+        self.is_html_fulltext = pub_info_dict.is_html_fulltext
+
 
     # Compound the necessary information into a csv-string to write to the log.
     def list_publication_info(self) -> List[str]:
-        # file_name, Pubmed Id, PMC Id, DOI, as_xml, as_pdf, as_html, fac_acknowledged, fac_suspected'
-        data = [self.file_name, self.pmid, str(self.pmcid), self.doi, str(self.is_pmc_xml_fulltext), str(self.is_pdf_fulltext), str(self.is_doi_fulltext), 'None', 'None']
+        # citation_file_name, Pubmed Id, PMC Id, DOI, as_xml, as_pdf, as_html, fac_acknowledged, fac_suspected'
+        data = [self.citation_file_name, self.pmid, str(self.pmcid), self.doi, str(self.is_xml_fulltext), str(self.is_pdf_fulltext), str(self.is_html_fulltext), 'None', 'None']
         return data
 
 
@@ -91,9 +116,9 @@ class QueryPmcAws(object):
     pmc_bucket = boto3_resource.Bucket('pmc-oa-opendata')
 
     # Try to download the fulltext as xml from PMC
-    def download_fulltext_from_pmc_aws(self, pmc_download_dir:Path, pmc_id:str) -> bool:
+    def download_fulltext_from_pmc_aws(self, pmc_id:str) -> bool:
 
-        xml_fulltext_download_path = pmc_download_dir / f'{pmc_id}_aws.xml'
+        xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmc_id}_aws.xml'
 
         pmc_key_prefixes = ['ao_comm', 'oa_noncomm', 'author_manuscript']
 
@@ -112,9 +137,9 @@ class QueryPmcAws(object):
 
 class QueryPmcOaiPmh(object):
 
-    def download_fulltext_from_pmc_pmh(self, pmc_download_dir:Path, pmc_id:str) -> bool:
+    def download_fulltext_from_pmc_pmh(self, pmc_id:str) -> bool:
 
-        xml_fulltext_download_path = pmc_download_dir / f'{pmc_id}_pmh.xml'
+        xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmc_id}_pmh.xml'
 
         payload = {'verb': 'GetRecord',
                    'identifier': 'oai:pubmedcentral.nih.gov:' + pmc_id[3:],
@@ -169,9 +194,9 @@ class QueryPmcFtp(object):
 
         return None, None
 
-    def download_pmc_fulltext_from_ftp(self, pmc_download_dir:Path, pmc_id:str) -> bool:
+    def download_pmc_fulltext_from_ftp(self, pmc_id:str) -> bool:
 
-        xml_fulltext_download_path = pmc_download_dir / f'{pmc_id}_ftp'
+        xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmc_id}_ftp'
 
         ftp_format, ftp_link = self._get_ftp_link(pmc_id)
         ftp_file_path = urlparse(ftp_link).path
@@ -216,7 +241,9 @@ class QueryKopsPdf(object):
     def __del__(self):
         self.driver.quit()
 
-    def download_fulltext_pdf_from_kops(self, kops_download_dir:Path, pubmed_id:str) -> bool:
+    def download_fulltext_pdf_from_kops(self, pubmed_id:str) -> bool:
+
+        pdf_download_fullpath = FilePaths.pdf_dir_fullpath / f'{pubmed_id}_kops.pdf'
 
         # request the search page
         self.driver.get(Urls.kops_search_base_url + pubmed_id)
@@ -245,9 +272,9 @@ class QueryKopsPdf(object):
                     link_url = element.get_attribute("href")
                     if link_url.startswith(Urls.kops_download_base_url):
                         response = requests.get(link_url)
-                        with open(kops_download_dir / f'{pubmed_id}_kops.pdf', 'wb') as pdf_file:
+                        with open(pdf_download_fullpath, 'wb') as pdf_file:
                             pdf_file.write(response.content)
-                        logger.info(f'PubMed ID {pubmed_id} was found in KOPS and saved to {kops_download_dir / f'{pubmed_id}_kops.pdf'}.')
+                        logger.info(f'PubMed ID {pubmed_id} was found in KOPS and saved to {pdf_download_fullpath}.')
                         return True
 
             logger.info(f'PubMed ID {pubmed_id} has no KOPS entry.')
@@ -271,7 +298,9 @@ class QueryDoiHtml(object):
     def __del__(self):
         self.driver.quit()
 
-    def download_fulltext_html_via_doi(self, html_download_dir:Path, doi:str) -> bool:
+    def download_fulltext_html_via_doi(self, doi:str) -> bool:
+
+        html_download_fullpath = FilePaths.html_dir_fullpath / f'{sanitize_filename(doi)}.html'
 
         # request the search page
         self.driver.get(Urls.doi_base_url + doi)
@@ -285,10 +314,10 @@ class QueryDoiHtml(object):
         time.sleep(1)
 
         # Store the webpage
-        with open(html_download_dir / f'{sanitize_filename(doi)}.html', 'w') as html_file:
+        with open(html_download_fullpath, 'w') as html_file:
             html_file.write(str(self.driver.page_source.encode('utf-8')))
 
-        logger.info(f'Html page for DOI {doi} was saved to {html_download_dir / f'{sanitize_filename(doi)}.html'}.')
+        logger.info(f'Html page for DOI {doi} was saved to {html_download_fullpath}.')
         return True
 
 
@@ -305,7 +334,9 @@ class QueryShadowPdf(object):
     def __del__(self):
         self.driver.quit()
 
-    def download_fulltext_pdf_from_shadow(self, pdf_download_dir:Path, pubmed_id:str, doi:str) -> bool:
+    def download_fulltext_pdf_from_shadow(self, pubmed_id:str, doi:str) -> bool:
+
+        pdf_download_fullpath = FilePaths.pdf_dir_fullpath / f'{pubmed_id}_shadow.pdf'
 
         # request the search page
         self.driver.get(Urls.shadow_lib_base_url + doi)
@@ -323,10 +354,10 @@ class QueryShadowPdf(object):
                 shadow_download_link = element.get_attribute('src')
                 download_response = requests.get(shadow_download_link)
                 if download_response.status_code == 200:
-                    with open(pdf_download_dir / f'{pubmed_id}_shadow.pdf', 'wb') as pdf_file:
+                    with open(pdf_download_fullpath, 'wb') as pdf_file:
                         pdf_file.write(download_response.content)
                         logger.info(
-                            f'PubMed ID {pubmed_id} was found in shadow library and saved to {pdf_download_dir / f'{pubmed_id}_shadow.pdf'}.')
+                            f'PubMed ID {pubmed_id} was found in shadow library and saved to {pdf_download_fullpath}.')
                         return True
                 logger.info(f'PubMed ID {pubmed_id} has no shadow lib entry.')
                 return False
@@ -335,25 +366,26 @@ class QueryShadowPdf(object):
             print(f'No download link found for DOI {doi}')
             return False
 
+
 if __name__ == '__main__':
 
-
-
+    aws_query = QueryPmcAws()
+    aws_query.download_fulltext_from_pmc_aws('PMC7118124')
 
     ftp_query = QueryPmcFtp()
-    ftp_query.download_pmc_fulltext_from_ftp(FilePaths.publication_dir / FilePaths.pmc_xmlfulltext_subdirectory,
-                                             'PMC7118124',
-                                             )
+    ftp_query.download_pmc_fulltext_from_ftp('PMC7118124')
 
+    pmh_query = QueryPmcOaiPmh()
+    pmh_query.download_fulltext_from_pmc_pmh('PMC7118124')
 
     kops_query = QueryKopsPdf()
-    kops_query.download_fulltext_pdf_from_kops(FilePaths.publication_dir / FilePaths.pdf_fulltext_subdirectory,
-                                               '32072999',
-                                               )
+    kops_query.download_fulltext_pdf_from_kops('32072999')
+
+    html_query = QueryDoiHtml()
+    html_query.download_fulltext_html_via_doi('10.3390/biom10060951')
 
     shadow_query = QueryShadowPdf()
-    shadow_query.download_fulltext_pdf_from_shadow(FilePaths.publication_dir / FilePaths.pdf_fulltext_subdirectory,
-                                                   '32275434',
+    shadow_query.download_fulltext_pdf_from_shadow('32275434',
                                                    '10.1021/acs.jpca.0c01844',
                                                    )
 

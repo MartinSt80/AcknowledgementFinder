@@ -5,18 +5,29 @@ from pathlib import Path
 @dataclass
 class FilePaths:
 
+   # Path components, change as needed
    publication_dir = Path('D:/PubTracker/test_pubs/2020')
 
    log_subdirectory = 'logs'
-   pmc_xmlfulltext_subdirectory = 'pmc_xml_fulltexts'
+   xml_fulltext_subdirectory = 'pmc_xml_fulltexts'
    pdf_fulltext_subdirectory = 'pdf_fulltexts'
    html_fulltext_subdirectory = 'html_fulltexts'
+   ack_subdirectory = 'cf_acknowledged'
 
    publication_log_file_name = 'publications_log.csv'
    download_log_file_name = 'download_log.txt'
+   results_log_file_name = 'results_log.txt'
 
+   # Full paths 
+   log_dir_fullpath = publication_dir / log_subdirectory
+   xml_dir_fullpath = publication_dir / xml_fulltext_subdirectory
+   pdf_dir_fullpath = publication_dir / pdf_fulltext_subdirectory
+   html_dir_fullpath = publication_dir / html_fulltext_subdirectory
+   ack_dir_fullpath = publication_dir / ack_subdirectory
+   
    publication_log_fullpath = publication_dir / log_subdirectory / publication_log_file_name
    download_log_fullpath = publication_dir / log_subdirectory / download_log_file_name
+   results_log_fullpath = publication_dir / log_subdirectory / results_log_file_name
 
 
 @dataclass
