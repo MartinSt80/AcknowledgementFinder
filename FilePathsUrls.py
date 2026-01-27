@@ -12,7 +12,7 @@ class FilePaths:
    xml_fulltext_subdirectory = 'pmc_xml_fulltexts'
    pdf_fulltext_subdirectory = 'pdf_fulltexts'
    html_fulltext_subdirectory = 'html_fulltexts'
-   ack_subdirectory = 'cf_acknowledged'
+   ack_subdirectory = 'ack_texts'
 
    publication_log_file_name = 'publications_log.csv'
    download_log_file_name = 'download_log.txt'

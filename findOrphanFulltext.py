@@ -6,7 +6,7 @@ class PublicationLog:
 
     def __init__(self, csv_string):
         # csv_string is:
-        # file_name, as_xml, as_pdf, fac_acknowledged, fac_suspected\n'
+        # citation_file_name, as_xml, as_pdf, fac_acknowledged, fac_suspected\n'
         attributes = csv_string.rstrip('\n').split(',')
         self.file_name = Path(attributes[0])
         self.is_pmc_xml_fulltext = self._str_to_bool(attributes[1])

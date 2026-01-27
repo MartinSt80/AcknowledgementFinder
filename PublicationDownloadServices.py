@@ -24,6 +24,17 @@ from FilePathsUrls import Urls, FilePaths
 
 class PublicationLog:
 
+    log_headers = ['citation_file_name',
+                   'Pubmed Id',
+                   'PMC Id',
+                   'DOI',
+                   'pmc_xml',
+                   'kops_pdf',
+                   'doi_html',
+                   'fac_acknowledged',
+                   'fac_suspected',
+                   ]
+
     def __init__(self) -> None:
 
         self.citation_file_name = ''
@@ -36,13 +47,9 @@ class PublicationLog:
         self.is_pdf_fulltext = False
         self.is_html_fulltext = False
 
-        self.is_fac_acknowledged = False
-        self.is_fac_suspected = False
 
     # get the PubmedId from the retrieved Pubmed citation entry
     def _get_pmid_doi(self, citation_file_path:Path) -> None:
-
-        doi = None
 
         # read the pubmed entry's xml-tree and identify the PubMed-ID
         with citation_file_path.open(mode='rb') as pub_entry_file:
@@ -66,7 +73,8 @@ class PublicationLog:
         # converter_response = requests.get(self.id_converter_url + '28729661')
 
         converter_response = requests.get(Urls.pubmed_to_pmc_id_converter_url + self.pmid)
-        if converter_response.status_code != 200:
+
+        if not converter_response.ok:
             logger.info(
                 f'{Path(self.citation_file_name).stem} with the PubmedID {self.pmid} the API responded with an error code of {converter_response.status_code}.')
             return
@@ -76,6 +84,7 @@ class PublicationLog:
             if not (record.get('status') == 'error'):
                 logger.info(f'{Path(self.citation_file_name).stem} with the PubmedID {self.pmid} has the PMC entry {record.get('pmcid')}.')
                 self.pmcid = record.get('pmcid')
+                return
 
             logger.info(
                 f'{Path(self.citation_file_name).stem} with the PubmedID {self.pmid} has no PMC entry.')
@@ -90,22 +99,36 @@ class PublicationLog:
 
 
     # Initialize from log
-    def initialize_from_log(self, pub_info_dict:dict) -> None:
-        self.citation_file_name = pub_info_dict.citation_file_name
-        self.pmid = pub_info_dict.pmid
-        self.doi = pub_info_dict.doi
-        self.pmcid = pub_info_dict.pmcid
+    def initialize_from_log_entry(self, pub_info_dict:dict) -> None:
+        self.citation_file_name = pub_info_dict[self.log_headers[0]]
+        self.pmid = pub_info_dict[self.log_headers[1]]
+        self.pmcid = pub_info_dict[self.log_headers[2]]
+        self.doi = pub_info_dict[self.log_headers[3]]
 
-        self.is_xml_fulltext = pub_info_dict.is_xml_fulltext
-        self.is_pdf_fulltext = pub_info_dict.is_pdf_fulltext
-        self.is_html_fulltext = pub_info_dict.is_html_fulltext
+        self.is_xml_fulltext = pub_info_dict[self.log_headers[4]]
+        self.is_pdf_fulltext = pub_info_dict[self.log_headers[5]]
+        self.is_html_fulltext = pub_info_dict[self.log_headers[6]]
 
 
     # Compound the necessary information into a csv-string to write to the log.
     def list_publication_info(self) -> List[str]:
-        # citation_file_name, Pubmed Id, PMC Id, DOI, as_xml, as_pdf, as_html, fac_acknowledged, fac_suspected'
-        data = [self.citation_file_name, self.pmid, str(self.pmcid), self.doi, str(self.is_xml_fulltext), str(self.is_pdf_fulltext), str(self.is_html_fulltext), 'None', 'None']
+        # citation_file_name, Pubmed Id, PMC Id, DOI, as_xml, as_pdf, as_html, fac_acknowledged, fac_suspected
+        data = [self.citation_file_name,
+                self.pmid,
+                self.pmcid,
+                self.doi,
+                str(self.is_xml_fulltext),
+                str(self.is_pdf_fulltext),
+                str(self.is_html_fulltext),
+                'False',
+                'False',
+                ]
+
         return data
+
+    @property
+    def has_fulltext(self):
+        return self.is_xml_fulltext or self.is_pdf_fulltext or self.is_html_fulltext
 
 
 class QueryPmcAws(object):
@@ -116,7 +139,7 @@ class QueryPmcAws(object):
     pmc_bucket = boto3_resource.Bucket('pmc-oa-opendata')
 
     # Try to download the fulltext as xml from PMC
-    def download_fulltext_from_pmc_aws(self, pmc_id:str) -> bool:
+    def download_fulltext_from_pmc_aws(self, pmid: str, pmc_id:str) -> bool:
 
         xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmc_id}_aws.xml'
 
@@ -125,21 +148,22 @@ class QueryPmcAws(object):
         for prefix in pmc_key_prefixes:
             try:
                 self.pmc_bucket.download_file(f'{prefix}/xml/all/{pmc_id}.xml', xml_fulltext_download_path)
-                logger.info(f'{prefix}/xml/all/{pmc_id}.xml was found and saved to {xml_fulltext_download_path}')
+                logger.info(f'Pubmed Id {pmid}: {prefix}/xml/all/{pmc_id}.xml was found and saved to {xml_fulltext_download_path}')
                 return True
             except Exception as e:
-                logger.log(msg=f'{prefix}/xml/all/{pmc_id}.xml not found', level=5)
+                logger.info(msg=f'Pubmed Id {pmid}: {prefix}/xml/all/{pmc_id}.xml could not be retrieved: {e}')
 
         else:
-            logger.info(f'No PMC xml fulltext available for {pmc_id} through the PMC aws cloud.')
+            logger.info(f'Pubmed Id {pmid}: No PMC xml fulltext available for {pmc_id} through the PMC aws cloud.')
             return False
 
 
 class QueryPmcOaiPmh(object):
 
-    def download_fulltext_from_pmc_pmh(self, pmc_id:str) -> bool:
+    @staticmethod
+    def download_fulltext_from_pmc_pmh(pmid:str, pmc_id:str) -> bool:
 
-        xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmc_id}_pmh.xml'
+        xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmid}_{pmc_id}_pmh.xml'
 
         payload = {'verb': 'GetRecord',
                    'identifier': 'oai:pubmedcentral.nih.gov:' + pmc_id[3:],
@@ -147,13 +171,13 @@ class QueryPmcOaiPmh(object):
                    }
 
         pmc_oai_pmh_response = requests.get(Urls.pmc_pmh_base_url, params=payload)
-        if pmc_oai_pmh_response.status_code == 200:
+        if pmc_oai_pmh_response.ok:
             with open(xml_fulltext_download_path, 'wb') as xml_file:
                 xml_file.write(pmc_oai_pmh_response.content)
-            logger.info(f'A xml fulltext for the PMC-ID {pmc_id} was found using the PMC OAI-PMH API and saved to {xml_fulltext_download_path}')
+            logger.info(f'Pubmed Id {pmid}: A xml fulltext for the PMC-ID {pmc_id} was found using the PMC OAI-PMH API and saved to {xml_fulltext_download_path}')
             return True
         else:
-            logger.info(f'No PMC xml fulltext available for {pmc_id} through the PMC OAI-PMH API.')
+            logger.info(f'Pubmed Id {pmid}: No PMC xml fulltext available for {pmc_id} through the PMC OAI-PMH API.')
             return False
 
 
@@ -172,7 +196,7 @@ class QueryPmcFtp(object):
        self.ftp_connection.quit()
 
     # Get the ftp link to download the fulltext pdf or tar.gz
-    def _get_ftp_link(self, pmc_id:str) -> Tuple[str, str]|Tuple[None, None]:
+    def _get_ftp_link(self, pmid:str, pmc_id:str) -> Tuple[str, str]|Tuple[None, None]:
 
         req_payload = {'id': pmc_id}
 
@@ -180,8 +204,8 @@ class QueryPmcFtp(object):
                                          params=req_payload,
                                          headers= self.request_header)
 
-        if int(pmc_info_response.status_code) != 200:
-            logger.info(f'Response of PMC API when retrieving record info for PMC ID {pmc_id}: {pmc_info_response.status_code}')
+        if not pmc_info_response.ok:
+            logger.info(f'Pubmed Id {pmid}: Response of PMC API when retrieving record info for PMC ID {pmc_id}: {pmc_info_response.status_code}')
             return None, None
         else:
             xml_tree = ET.fromstring(pmc_info_response.text)
@@ -194,11 +218,11 @@ class QueryPmcFtp(object):
 
         return None, None
 
-    def download_pmc_fulltext_from_ftp(self, pmc_id:str) -> bool:
+    def download_pmc_fulltext_from_ftp(self, pmid:str, pmc_id:str) -> bool:
 
         xml_fulltext_download_path = FilePaths.xml_dir_fullpath / f'{pmc_id}_ftp'
 
-        ftp_format, ftp_link = self._get_ftp_link(pmc_id)
+        ftp_format, ftp_link = self._get_ftp_link(pmid, pmc_id)
         ftp_file_path = urlparse(ftp_link).path
 
         if ftp_link:
@@ -207,7 +231,7 @@ class QueryPmcFtp(object):
                     self.ftp_connection.retrbinary(f'RETR {ftp_file_path}', pdf_file.write)
 
                 logger.info(
-                    f'A pdf fulltext for the PMC-ID {pmc_id} was found on the PMC ftp server and saved to {xml_fulltext_download_path}')
+                    f'Pubmed Id {pmid}: A pdf fulltext for the PMC-ID {pmc_id} was found on the PMC ftp server and saved to {xml_fulltext_download_path}')
                 return True
 
             if ftp_format == 'tgz':
@@ -221,10 +245,10 @@ class QueryPmcFtp(object):
                         shutil.copy(file, xml_fulltext_download_path.with_name(f'{pmc_id}_ftp.xml'))
 
                 logger.info(
-                    f'A xml fulltext for the PMC-ID {pmc_id} was found on the PMC ftp server and saved to {xml_fulltext_download_path}')
+                    f'Pubmed Id {pmid}: A xml fulltext for the PMC-ID {pmc_id} was found on the PMC ftp server and saved to {xml_fulltext_download_path}')
                 return True
 
-        logger.info(f'No PMC xml or pdf fulltext available for {pmc_id} on the PMC ftp server.')
+        logger.info(f'Pubmed Id {pmid}: No PMC xml or pdf fulltext available for {pmc_id} on the PMC ftp server.')
         return False
 
 
@@ -298,7 +322,7 @@ class QueryDoiHtml(object):
     def __del__(self):
         self.driver.quit()
 
-    def download_fulltext_html_via_doi(self, doi:str) -> bool:
+    def download_fulltext_html_via_doi(self, pmid:str, doi:str) -> bool:
 
         html_download_fullpath = FilePaths.html_dir_fullpath / f'{sanitize_filename(doi)}.html'
 
@@ -317,7 +341,7 @@ class QueryDoiHtml(object):
         with open(html_download_fullpath, 'w') as html_file:
             html_file.write(str(self.driver.page_source.encode('utf-8')))
 
-        logger.info(f'Html page for DOI {doi} was saved to {html_download_fullpath}.')
+        logger.info(f'Pubmed Id {pmid}: Html page for DOI {doi} was saved to {html_download_fullpath}.')
         return True
 
 
@@ -363,31 +387,31 @@ class QueryShadowPdf(object):
                 return False
 
         else:
-            print(f'No download link found for DOI {doi}')
+            print(f'Pubmed Id {pubmed_id}: No download link found for DOI {doi}')
             return False
 
 
 if __name__ == '__main__':
 
-    aws_query = QueryPmcAws()
-    aws_query.download_fulltext_from_pmc_aws('PMC7118124')
-
-    ftp_query = QueryPmcFtp()
-    ftp_query.download_pmc_fulltext_from_ftp('PMC7118124')
-
-    pmh_query = QueryPmcOaiPmh()
-    pmh_query.download_fulltext_from_pmc_pmh('PMC7118124')
-
-    kops_query = QueryKopsPdf()
-    kops_query.download_fulltext_pdf_from_kops('32072999')
-
-    html_query = QueryDoiHtml()
-    html_query.download_fulltext_html_via_doi('10.3390/biom10060951')
-
-    shadow_query = QueryShadowPdf()
-    shadow_query.download_fulltext_pdf_from_shadow('32275434',
-                                                   '10.1021/acs.jpca.0c01844',
-                                                   )
-
+    # aws_query = QueryPmcAws()
+    # aws_query.download_fulltext_from_pmc_aws('PMC7118124')
+    #
+    # ftp_query = QueryPmcFtp()
+    # ftp_query.download_pmc_fulltext_from_ftp('PMC7118124')
+    #
+    # pmh_query = QueryPmcOaiPmh()
+    # pmh_query.download_fulltext_from_pmc_pmh('PMC7118124')
+    #
+    # kops_query = QueryKopsPdf()
+    # kops_query.download_fulltext_pdf_from_kops('32072999')
+    #
+    # html_query = QueryDoiHtml()
+    # html_query.download_fulltext_html_via_doi('10.3390/biom10060951')
+    #
+    # shadow_query = QueryShadowPdf()
+    # shadow_query.download_fulltext_pdf_from_shadow('32275434',
+    #                                                '10.1021/acs.jpca.0c01844',
+    #                                                )
+    exit()
 
 

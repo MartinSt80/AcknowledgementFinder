@@ -45,6 +45,10 @@ def create_directories_and_files() -> None:
     if not FilePaths.html_dir_fullpath.is_dir():
         FilePaths.html_dir_fullpath.mkdir()
 
+    # make sure the acknowledgement directory exists
+    if not FilePaths.ack_dir_fullpath.is_dir():
+        FilePaths.ack_dir_fullpath.mkdir()
+
 
 def perform_downloads(query_pmc=True,
                       query_kops=True,
@@ -63,15 +67,21 @@ def perform_downloads(query_pmc=True,
 
         # # If the paper is available in PMC AWS cloud as xml, get the XML, not needed, is subset of pmh
         # if current_publication.pmcid:
-        # 		current_publication.is_xml_fulltext = pmc_request.download_fulltext_from_pmc_aws(current_publication.pmcid)
+        # 		current_publication.is_xml_fulltext = pmc_request.download_fulltext_from_pmc_aws(current_publication.pmid,
+        # 	                                                                                	 current_publication.pmcid,
+        # 	                                                                                	 )
 
         # else try to get it from the PMC AOI PMH API
         if current_publication.pmcid and query_pmc:
-            current_publication.is_xml_fulltext = QueryPmcOaiPmh().download_fulltext_from_pmc_pmh(current_publication.pmcid)
+            current_publication.is_xml_fulltext = QueryPmcOaiPmh().download_fulltext_from_pmc_pmh(current_publication.pmid,
+                                                                                                  current_publication.pmcid,
+                                                                                                  )
 
         # # else try to get it from the PMC ftp server, not needed, can be used as backup
         # if current_publication.pmcid and query_pmc:
-        # 	current_publication.is_xml_fulltext = ftp_request.download_pmc_fulltext_from_ftp(current_publication.pmcid)
+        # 	current_publication.is_xml_fulltext = ftp_request.download_pmc_fulltext_from_ftp(current_publication.pmid,
+        #                                                                               	 current_publication.pmcid,
+        #                                                                               	 )
 
         # If we didn't get the fulltext by PMC, try to download the pdf from KOPS
         if not current_publication.is_xml_fulltext and query_kops:
@@ -79,7 +89,9 @@ def perform_downloads(query_pmc=True,
 
         # If nothing else worked try to get the html version of the file via the DOI, Warning scraper protection is hit really quick
         if (not current_publication.is_xml_fulltext and not current_publication.is_pdf_fulltext) and query_doi:
-            current_publication.is_html_fulltext = doi_request.download_fulltext_html_via_doi(current_publication.doi)
+            current_publication.is_html_fulltext = doi_request.download_fulltext_html_via_doi(current_publication.pmid,
+                                                                                              current_publication.doi,
+                                                                                              )
 
         # Currently it is easier to try to retrieve full texts from shadow libraries
         if (not current_publication.is_xml_fulltext and not current_publication.is_pdf_fulltext) and query_shadow:
@@ -125,23 +137,27 @@ def perform_download_from_shadow(from_log=False,
     return
 
 
-def create_publication_log(publications:List[PublicationLog]) -> None:
+def create_publication_log(publications:List[PublicationLog], logger: logging.Logger) -> None:
 
-    headers = ['citation_file_name', 'Pubmed Id', 'PMC Id', 'DOI', 'pmc_xml' , 'kops_pdf', 'doi_html', 'fac_acknowledged', 'fac_suspected']
     publication_data = [pub.list_publication_info() for pub in publications]
-    publication_df = pd.DataFrame(publication_data, columns=headers)
-    publication_df.to_csv(FilePaths.publication_log_fullpath, index=False)
+    publication_df = pd.DataFrame(publication_data, columns=PublicationLog.log_headers)
+    publication_df.to_csv(FilePaths.publication_log_fullpath, index=False, encoding='utf8')
+    logger.info('************************************************************')
+    full_text_count = len([True for pub in publications if pub.has_fulltext])
+    pubs_wo_full_text = [pub for pub in publications if not pub.has_fulltext]
+    logger.info(f'{full_text_count}/{len(publications)} publications have available full texts.')
+    for pub in pubs_wo_full_text:
+        logger.info(f'Missing fulltext: {pub.citation_file_name}, PMID: {pub.pmid}, DOI: {pub.doi}')
     return
 
 
 if __name__ == '__main__':
 
+    # Create directories and logs
+    create_directories_and_files()
 
     # Setup logging
     root_logger = configure_logger()
-
-    # Create directories and logs
-    create_directories_and_files()
 
     # Setup download interfaces, if needed
     pmc_request = QueryPmcAws()
@@ -153,8 +169,8 @@ if __name__ == '__main__':
 
     publication_list = perform_downloads()
 
-    # # not needed, if performed before
+    # not needed, if performed during perform_downloads()
     # perform_download_from_shadow(from_log=True)
 
     # Write the info
-    create_publication_log(publication_list)
+    create_publication_log(publication_list, root_logger)
